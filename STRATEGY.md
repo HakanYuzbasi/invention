@@ -156,3 +156,34 @@ that real, pre-registered evidence, build the limit-only options execution path.
 Until then the system is the ERP core plus a disciplined research lab — paper
 only, with live trading mechanically gated on the pre-registered live-gate
 criteria.
+
+## 8. Integrity corrections (post-review, 2026-07-17)
+
+An adversarial review of the delivered work forced four corrections, all now on
+the `eureka` branch (377 tests green):
+
+1. **The VRP gate cannot pass on modeled prices.** The put-spread screen prices
+   options with Black-Scholes *from VIX* — a model of option prices, not the
+   prices options traded at. It is now hard-locked to `clears_gate=False`
+   regardless of its Deflated Sharpe. A real VRP decision requires an
+   *admissible option-chain contract* (`fable5/research/option_chain.py`):
+   immutable point-in-time bid/ask, dataset provenance (source + sha256), a
+   pre-registered conservative fill/cost/roll policy, and stale-data
+   fail-closed. Real option data must be sourced before VRP can even be eligible.
+2. **Risk breakers are now derived, not tuned.** The earlier loosening
+   (daily-loss 3%→6%, drawdown 10%→25%) was tuned to a backtest. They are now
+   *derived* from a pre-registered portfolio risk budget
+   (`fable5/risk_budget.py`, `evidence/portfolio_risk_budget.json`): daily-loss
+   reverts to **3%** (active book; the passive core is exempt from its
+   unrealized view), portfolio-drawdown is **20%** (rides a routine bear, halts
+   above it), gross exposure follows the allocation. The 20% halt was verified
+   to ride a realistic correction and trip precisely on a severe crash.
+3. **Paper P&L is operational evidence, not profitability proof.** Simulated
+   fills omit market impact, latency slippage, queue position, fees, and
+   dividends. Reports are tagged accordingly; the live gate treats paper stats
+   as operational readiness only — the profitability bar is the cost-realistic
+   walk-forward attestation.
+4. **Real-data path shipped as turnkey plumbing** (`fable5/vix_data.py`,
+   `fable5/backfill.py`, `RUNBOOK.md`) — the actual fetch and paper run happen
+   on a networked machine with Alpaca paper keys, since this environment has
+   neither.
