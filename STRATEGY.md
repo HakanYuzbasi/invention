@@ -79,11 +79,21 @@ better than that must earn its place through the gauntlet.
 
 ## 4. The system (three layers, all in `eureka`)
 
-| Layer | What | Capital share |
-|---|---|---|
-| 1. ERP core | `core_equity_v1` — band-rebalanced, vol-targeted, regime-aware SPY core; near-zero turnover | dominant (~85–90%) |
-| 2. VRP sleeve | `vrp_putspread_v1` — defined-risk SPY put-spread, entries conditioned on VIX term-structure contango + IV−RV spread; never naked | small (~10–15%), gauntlet-gated |
-| 3. Research lab | existing engines/strategies (mean-reversion, momentum) at minimal size plus new candidates — nothing scales until it clears pre-registration + trials-ledger-deflated Sharpe | residual |
+| Layer | What | Capital share | Status |
+|---|---|---|---|
+| 1. ERP core | `core_equity_v1` — band-rebalanced, vol-targeted, regime-aware SPY core; near-zero turnover | dominant (~85%) | **built + validated** |
+| 2. VRP sleeve | `research/vrp_putspread.py` — defined-risk SPY put-spread, entries conditioned on VIX term-structure contango + IV−RV richness; never naked | small (~10–15%) once it clears | **evaluation gate built; execution deliberately not built** |
+| 3. Research lab | existing engines/strategies (mean-reversion, momentum) at minimal size plus new candidates — nothing scales until it clears pre-registration + trials-ledger-deflated Sharpe | residual | **honesty machinery built** |
+
+**Why the VRP sleeve is a gate, not a live sleeve (yet).** Apex's own research
+put VRP's Deflated Sharpe at ~0.77, below the 0.95 bar. The project's first rule
+is that deploying sub-bar signals is how the prior account lost real money. So
+Phase 3 shipped the *evaluation gate* — the defined-risk put-spread backtest
+with Black-Scholes pricing, realistic skew, and VIX term-structure conditioning,
+wired to pre-registration — and deliberately did **not** build options execution
+into fable5's equity pipeline. That execution work is premature architecture for
+a sleeve that fails its own bar; it unlocks only if/when the gate clears on real
+paper data.
 
 Supporting machinery ported from apex into fable5:
 
@@ -116,3 +126,33 @@ success criterion. Its three cheap artifacts — the memo template, the
 decision/prediction journal, and pre-registered thresholds — are exactly what
 was folded into fable5's attestation and trials-ledger machinery, where they
 gate real decisions.
+
+## 7. What was delivered (2026-07-17)
+
+All code lives on the `eureka` repo branch `claude/consolidation-v1`; the full
+test suite is green (356 passed).
+
+- **Layer 1 — `fable5/strategies/core_equity_v1.py`**: band-rebalanced,
+  vol-targeted, regime-aware SPY core. Validated end-to-end through the
+  production `BacktestEngine`: near-zero turnover (≈9 orders over 500 days),
+  lower drawdown than buy-and-hold in a correction, correct vol-based de-risk.
+  Registered as the dominant strategy with a strategy+symbol-scoped exposure
+  carve-out; the loss circuit breakers were retuned (and the core exempted from
+  per-trade stops and the daily-loss breaker's unrealized view) because a
+  passive equity core's risk is managed by *size*, not a loss kill-switch —
+  while the 25% equity-drawdown halt still covers the whole book.
+- **Layer 3 — honesty machinery**: `fable5/trials_ledger.py` (cumulative,
+  idempotent, fail-closed deflation count) and `fable5/preregistration.py`
+  (ante-hoc config-hash freeze, fails closed on drift), wired into
+  `walk_forward.py` so every OOS evaluation raises the multiple-testing bar for
+  the next candidate.
+- **Layer 2 — `fable5/research/vrp_putspread.py`**: the VRP evaluation gate
+  (see §6). Run it with `python -m fable5.research.vrp_putspread --register`; it
+  currently reports `clears_gate=False`, which is the correct, honest outcome.
+
+**Next step to actually deploy VRP:** feed the gate real SPY + VIX/VIX9D history
+(not the offline synthetic path), and only if the Deflated Sharpe clears 0.95 on
+that real, pre-registered evidence, build the limit-only options execution path.
+Until then the system is the ERP core plus a disciplined research lab — paper
+only, with live trading mechanically gated on the pre-registered live-gate
+criteria.
