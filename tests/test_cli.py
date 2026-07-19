@@ -207,3 +207,83 @@ def test_checks_file(run, seeded, tmp_path):
     out = run("eval", "run", "debugger", "--case", "filed",
               "--output-file", str(out_file))
     assert "[PASS] filed" in out
+
+
+class TestAdapterMode:
+    @pytest.fixture
+    def cased(self, run, seeded):
+        run("case", "add", "debugger", "smoke",
+            "--var", "error=ZeroDivisionError",
+            "--check", "contains:cause", "--check", "min_length:5")
+
+    def test_model_and_output_file_mutually_exclusive(self, run, cased, tmp_path):
+        out_file = tmp_path / "o.txt"
+        out_file.write_text("x")
+        run("eval", "run", "debugger", "--model", "gemma3",
+            "--output-file", str(out_file), expect=1)
+
+    def test_adapter_flags_require_model(self, run, cased, capsys):
+        run("eval", "run", "debugger", "--ollama-url", "http://x:1", expect=1)
+        run("eval", "run", "debugger", "--show-output", expect=1)
+
+    def test_one_command_loop_against_stub(self, run, cased, ollama_stub):
+        ollama_stub.respond_with("The root cause is division by zero.")
+        out = run("eval", "run", "debugger", "--model", "gemma3",
+                  "--ollama-url", ollama_stub.url, "--note", "stub")
+        assert "[PASS] smoke" in out
+        assert "(ollama:gemma3)" in out
+        assert "1/1 checked case(s) passed" in out
+        # the rendered prompt (with case variables) reached the "model"
+        assert "ZeroDivisionError" in ollama_stub.requests[0]["prompt"]
+        # run was recorded with the adapter as output source
+        history = run("eval", "history", "debugger")
+        assert "1/1 passed" in history and "stub" in history
+
+    def test_failing_checks_exit_1(self, run, cased, ollama_stub):
+        ollama_stub.respond_with("I have no idea.")
+        out = run("eval", "run", "debugger", "--model", "gemma3",
+                  "--ollama-url", ollama_stub.url, expect=1)
+        assert "[FAIL] smoke" in out
+
+    def test_show_output_prints_generated_text(self, run, cased, ollama_stub):
+        ollama_stub.respond_with("The root cause is division by zero.")
+        out = run("eval", "run", "debugger", "--model", "gemma3",
+                  "--ollama-url", ollama_stub.url, "--show-output")
+        assert "| The root cause is division by zero." in out
+
+    def test_output_hidden_by_default(self, run, cased, ollama_stub):
+        ollama_stub.respond_with("The root cause is division by zero.")
+        out = run("eval", "run", "debugger", "--model", "gemma3",
+                  "--ollama-url", ollama_stub.url)
+        assert "division by zero" not in out
+
+    def test_unreachable_server_fails_cleanly(self, db, cased, capsys):
+        import socket
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            dead_port = sock.getsockname()[1]
+        code = main(["--db", str(db), "eval", "run", "debugger",
+                     "--model", "gemma3", "--timeout", "2",
+                     "--ollama-url", f"http://127.0.0.1:{dead_port}"])
+        captured = capsys.readouterr()
+        assert code == 1
+        assert "ollama serve" in captured.err
+        # atomic: no run recorded
+        code = main(["--db", str(db), "eval", "history", "debugger"])
+        assert "no eval runs recorded" in capsys.readouterr().out
+
+    def test_missing_model_fails_cleanly(self, db, cased, ollama_stub, capsys):
+        ollama_stub.status = 404
+        ollama_stub.body = json.dumps({"error": "model not found"}).encode()
+        code = main(["--db", str(db), "eval", "run", "debugger",
+                     "--model", "gemma9", "--ollama-url", ollama_stub.url])
+        captured = capsys.readouterr()
+        assert code == 1
+        assert "ollama pull gemma9" in captured.err
+
+    def test_manual_mode_unchanged(self, run, cased, tmp_path):
+        # the v1 flow still works exactly as before
+        good = tmp_path / "good.txt"
+        good.write_text("The root cause is a division by zero.")
+        out = run("eval", "run", "debugger", "--output-file", str(good))
+        assert "[PASS] smoke" in out

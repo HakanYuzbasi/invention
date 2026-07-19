@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from . import __version__, evaluator
+from .adapters import OllamaAdapter, resolve_ollama_url
 from .diffing import diff_versions
 from .errors import RegistryError, ValidationError
 from .models import CheckSpec, VariableSpec
@@ -368,20 +369,62 @@ def cmd_case_show(args: argparse.Namespace) -> int:
 
 
 def cmd_eval_run(args: argparse.Namespace) -> int:
-    output, source = _read_eval_output(args)
-    with _open_store(args) as store:
-        run, evaluations = evaluator.execute_run(
-            store,
-            prompt_id=args.id,
-            output=output,
-            version=args.version,
-            case_names=args.case or None,
-            output_source=source,
-            note=args.note,
-            rating=args.rating,
-            comment=args.comment,
+    outputs_by_case: dict[str, str] = {}
+
+    if args.model is None:
+        set_flags = [
+            flag
+            for flag, value in (
+                ("--ollama-url", args.ollama_url),
+                ("--timeout", args.timeout),
+                ("--temperature", args.temperature),
+                ("--show-output", args.show_output or None),
+            )
+            if value is not None
+        ]
+        if set_flags:
+            raise ValidationError(f"{', '.join(set_flags)}: only valid with --model")
+        output, source = _read_eval_output(args)
+        with _open_store(args) as store:
+            run, evaluations = evaluator.execute_run(
+                store,
+                prompt_id=args.id,
+                output=output,
+                version=args.version,
+                case_names=args.case or None,
+                output_source=source,
+                note=args.note,
+                rating=args.rating,
+                comment=args.comment,
+            )
+    else:
+        if args.output_file:
+            raise ValidationError(
+                "--model and --output-file are mutually exclusive: use --model for "
+                "local generation via Ollama, or --output-file for a captured output"
+            )
+        adapter = OllamaAdapter(
+            model=args.model,
+            base_url=resolve_ollama_url(args.ollama_url),
+            timeout_seconds=args.timeout if args.timeout is not None else 120.0,
+            temperature=args.temperature if args.temperature is not None else 0.0,
         )
-    print(f"eval run {run.id} — {run.prompt_id} v{run.prompt_version} ({source})")
+        with _open_store(args) as store:
+            run, case_results = evaluator.execute_adapter_run(
+                store,
+                prompt_id=args.id,
+                adapter=adapter,
+                version=args.version,
+                case_names=args.case or None,
+                note=args.note,
+                rating=args.rating,
+                comment=args.comment,
+            )
+        evaluations = [r.evaluation for r in case_results]
+        if args.show_output:
+            outputs_by_case = {r.evaluation.case.name: r.output for r in case_results}
+
+    print(f"eval run {run.id} — {run.prompt_id} v{run.prompt_version} ({run.output_source})")
     failed = 0
     for ev in evaluations:
         if ev.passed is None:
@@ -395,6 +438,11 @@ def cmd_eval_run(args: argparse.Namespace) -> int:
         for outcome in ev.outcomes:
             mark = "ok" if outcome.passed else "!!"
             print(f"      {mark} {outcome.type}: {outcome.message}")
+        if ev.case.name in outputs_by_case:
+            text = outputs_by_case[ev.case.name]
+            print(f"      --- output ({len(text)} chars) ---")
+            for line in text.splitlines() or [""]:
+                print(f"      | {line}")
     if args.rating is not None:
         print(f"  rating: {args.rating}/5")
     checked = [ev for ev in evaluations if ev.passed is not None]
@@ -536,14 +584,27 @@ def build_parser() -> argparse.ArgumentParser:
     ep = eval_sub.add_parser(
         "run",
         help="evaluate a captured model output against a prompt's cases",
-        description="Render the prompt, run it in your model of choice, then feed "
-                    "the output here via --output-file or stdin.",
+        description="Manual mode: render the prompt, run it in your model of "
+                    "choice, then feed the output here via --output-file or stdin. "
+                    "Adapter mode: pass --model to render each case, generate the "
+                    "output through a local Ollama server, and check it — one command.",
     )
     ep.add_argument("id", help="prompt id")
     ep.add_argument("--version", type=int, help="prompt version evaluated (default: latest)")
     ep.add_argument("--case", action="append", metavar="NAME",
                     help="case to evaluate (repeatable; default: all cases)")
-    ep.add_argument("--output-file", help="file containing the model output")
+    ep.add_argument("--output-file", help="file containing the model output (manual mode)")
+    ep.add_argument("--model", metavar="NAME",
+                    help="generate outputs locally via Ollama with this model "
+                         "(e.g. gemma3, gemma2:2b); mutually exclusive with --output-file")
+    ep.add_argument("--ollama-url", metavar="URL",
+                    help="Ollama server (default: $OLLAMA_HOST or http://localhost:11434)")
+    ep.add_argument("--timeout", type=float, metavar="SECONDS",
+                    help="per-case generation timeout (default: 120)")
+    ep.add_argument("--temperature", type=float,
+                    help="sampling temperature (default: 0.0 for reproducibility)")
+    ep.add_argument("--show-output", action="store_true", default=False,
+                    help="print each generated output (outputs are never stored or logged)")
     ep.add_argument("--rating", type=int, help="manual quality rating 1-5")
     ep.add_argument("--comment", default="", help="manual comment")
     ep.add_argument("--note", default="", help="run note (e.g. which model produced the output)")

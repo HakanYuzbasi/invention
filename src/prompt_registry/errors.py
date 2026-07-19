@@ -24,3 +24,9 @@ class RenderError(RegistryError):
 
 class StorageError(RegistryError):
     """The registry database is missing, incompatible, or unreadable."""
+
+
+class AdapterError(RegistryError):
+    """A model adapter failed: server unreachable, model missing, timeout,
+    or malformed response. Messages must stay actionable and must never
+    include prompt bodies, variable values, or model outputs."""

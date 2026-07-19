@@ -7,7 +7,8 @@ them in chat history.
 - **Local only.** One SQLite file. No cloud, no accounts, no paid APIs. Works
   fully offline.
 - **Model-agnostic.** Outputs are produced wherever you like (Claude Code, a
-  local Gemma via Ollama, anything) and fed back in for evaluation.
+  local Gemma via Ollama, anything) and fed back in for evaluation — or, since
+  v0.2, generated in one command through a local Ollama server.
 - **Zero runtime dependencies.** Pure Python 3.10+ standard library. pytest is
   the only dev dependency.
 - **Versions are immutable.** Every change to a prompt appends a new numbered
@@ -65,11 +66,15 @@ prompt-registry case add code-review structure \
     --check "not_contains:apologize" \
     --check "min_length:20"
 
-# 7. Run the prompt anywhere, capture the output, evaluate it
+# 7a. Manual loop: run the prompt anywhere, capture the output, evaluate it
 prompt-registry render code-review --var "code=def f(): pass" -o input.txt
 # ... run input.txt through Claude Code / Gemma / anything, save to out.txt ...
 prompt-registry eval run code-review --output-file out.txt \
-    --rating 4 --note "gemma-2b via ollama"
+    --rating 4 --note "claude code, manual"
+
+# 7b. One-command local loop (optional, requires Ollama): render each case,
+#     generate through a local model, check, record
+prompt-registry eval run code-review --model gemma3 --note "gemma3 local"
 
 # 8. Review the evidence
 prompt-registry eval history code-review --detail
@@ -77,6 +82,35 @@ prompt-registry eval history code-review --detail
 
 `eval run` exits 0 when all checked cases pass and 1 otherwise, so it can gate
 scripts.
+
+## Optional: local model execution via Ollama
+
+Everything above works fully offline with no model server. If you also want
+the one-command loop, install [Ollama](https://ollama.com) and pull a model:
+
+```bash
+ollama pull gemma3        # or gemma2:2b, llama3.2, qwen2.5-coder, ...
+ollama serve              # usually already running as a service
+prompt-registry eval run code-review --model gemma3
+```
+
+With `--model`, each selected case is rendered with its own variables, sent to
+Ollama's `/api/generate`, and the generated output is checked and recorded —
+one output per case, pinned to the exact prompt version. Flags:
+
+- `--model NAME` — required to enable adapter mode; any Ollama model name.
+- `--ollama-url URL` — default `$OLLAMA_HOST` or `http://localhost:11434`.
+- `--timeout SECONDS` — per-case generation timeout (default 120).
+- `--temperature F` — default `0.0` so re-runs are as deterministic as the
+  model allows.
+- `--show-output` — print each generated output. By default outputs stay
+  in-memory only: they are never stored in the registry and never logged.
+
+Failure behavior is explicit and atomic: if Ollama is unreachable, the model
+isn't pulled, the request times out, or the response is malformed, the command
+exits 1 with an actionable message and **no partial eval run is recorded**.
+Only `eval run --model` ever touches the network; every other command works
+without Ollama installed.
 
 ## Where data lives
 
@@ -124,11 +158,12 @@ pytest -q
 Layout: `src/prompt_registry/` — `models.py` (frozen dataclasses),
 `store.py` (all SQLite persistence, no CLI coupling), `rendering.py`,
 `checks.py`, `diffing.py`, `evaluator.py`, `adapters.py` (the model-adapter
-seam for a future local-model integration), `cli.py`.
+seam: `ManualAdapter` and the stdlib-only `OllamaAdapter`), `cli.py`.
+Tests stub Ollama with a local `http.server`; no test needs Ollama installed.
 
-## Deliberately not in v1
+## Deliberately not built yet
 
-Model execution adapters (Ollama/Gemma), an MCP read-only server for Claude
-Code, full-text search, import/export, judge-model evals, any UI. The storage
-layer is CLI-independent, so the MCP surface and adapters can be added without
-touching the core.
+An MCP read-only server for Claude Code, full-text search, import/export,
+judge-model evals, retries/concurrency for generation, output persistence,
+any UI. The storage layer is CLI-independent, so the MCP surface can be added
+without touching the core.
