@@ -1,0 +1,12 @@
+{
+  "parser_version": "0.1.0",
+  "items": {
+    "NVDA": "ACTIVE_HOLD",
+    "MSFT": "ACTIVE_HOLD",
+    "AVGO": "ADD_MORE",
+    "PLTR": "NEW_BUY",
+    "SMCI": "SELL",
+    "ANET": "TRIM",
+    "DELL": "CLOSED"
+  }
+}

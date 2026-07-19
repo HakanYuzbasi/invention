@@ -1,0 +1,51 @@
+# CSS/text selectors for authenticated collection.
+# Kept OUT of code so brittle selectors are config, not hardcoded.
+# Copy to config/selectors.yaml and tune against the live site.
+#
+# The collector tries each selector in a list in order and uses the first
+# match. Parsing is hybrid (structured + text fallback), so selector drift
+# degrades gracefully instead of hard-failing.
+
+login:
+  # Fields on the login form.
+  username_candidates:
+    - "input[name='log']"
+    - "input[name='username']"
+    - "input[type='email']"
+    - "#user_login"
+  password_candidates:
+    - "input[name='pwd']"
+    - "input[name='password']"
+    - "input[type='password']"
+    - "#user_pass"
+  submit_candidates:
+    - "button[type='submit']"
+    - "input[type='submit']"
+    - "#wp-submit"
+  # Presence of ANY of these AFTER submit => still logged out (fail closed).
+  logged_out_markers:
+    - "input[name='pwd']"
+    - "text=Sign in"
+    - "text=Log in to your account"
+  # Presence of ANY of these => logged in.
+  logged_in_markers:
+    - "text=My Account"
+    - "text=Sign Out"
+    - "a[href*='logout']"
+
+portfolio:
+  # Container(s) most likely to hold the holdings table.
+  table_candidates:
+    - "table.portfolio"
+    - "table#holdings"
+    - "table"
+  # Column header text used to locate columns within a table (case-insensitive).
+  header_hints:
+    ticker: ["ticker", "symbol"]
+    name: ["company", "name", "stock"]
+    action: ["action", "status", "advice", "rating", "recommendation"]
+  # Text markers that indicate the portfolio content actually rendered.
+  content_markers:
+    - "text=Portfolio"
+    - "text=Buy Below"
+    - "text=Holdings"

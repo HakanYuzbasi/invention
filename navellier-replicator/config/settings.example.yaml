@@ -1,0 +1,55 @@
+# navellier-replicator behavior configuration.
+# Copy to config/settings.yaml (gitignored) and adjust.
+# Secrets do NOT belong here — they live in .env.
+
+sources:
+  # login_url / portfolio_url may also come from env (env wins if set).
+  login_url: "https://investorplace.com/login/"
+  # The public Platinum Growth portfolio page (presents a login wall when
+  # unauthenticated; the collector assumes auth + redirect + post-login nav).
+  portfolio_url: ""
+  # Platinum Growth is a combined offering and may span multiple surfaces.
+  # Add any update/article/subpage URLs here; each is captured separately.
+  update_urls: []
+    # - "https://investorplace.com/platinum-growth/updates/"
+
+parser:
+  # Items below this confidence are never treated as actionable.
+  confidence_threshold: 0.60
+  # If a run yields zero actionable items, treat as suspicious (fail closed).
+  min_expected_actionable: 1
+
+collection:
+  headed: false            # true = visible browser for debugging
+  screenshots: true
+  nav_timeout_ms: 45000
+  max_retries: 3
+  retry_backoff_seconds: [2, 4, 8]
+  # Fail closed if a captured page's visible text is shorter than this
+  # (a "logged in but empty" symptom).
+  min_content_chars: 400
+
+portfolio:
+  max_active_positions: 5
+  sizing_mode: "equal_weight"   # equal_weight | fixed_dollar
+  fixed_dollar_per_position: 2000.0
+  default_policy: "mirror_published_if_explicit"
+
+safety:
+  # Block if the active recommendation set changes by more than this fraction
+  # between consecutive runs without corroboration.
+  max_set_change_fraction: 0.5
+  trading_window:
+    enabled: true
+    timezone: "America/New_York"
+    open: "09:30"
+    close: "16:00"
+    weekdays_only: true
+
+broker:
+  # v0.1/v0.2: broker is disabled. v0.3 enables PAPER only.
+  mode: "paper"          # paper is the only accepted value; live is rejected
+  dry_run: true          # dry-run is the default and cannot be silently bypassed
+
+runtime:
+  dry_run: true
