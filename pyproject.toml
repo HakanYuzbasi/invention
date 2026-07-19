@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-registry"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first prompt registry and evaluator: store, version, search, render, diff, and evaluate prompts as first-class assets."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,9 +12,11 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+mcp = ["mcp>=1.2"]
 
 [project.scripts]
 prompt-registry = "prompt_registry.cli:entrypoint"
+prompt-registry-mcp = "prompt_registry.mcp.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

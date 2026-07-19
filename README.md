@@ -112,6 +112,79 @@ exits 1 with an actionable message and **no partial eval run is recorded**.
 Only `eval run --model` ever touches the network; every other command works
 without Ollama installed.
 
+## Optional: read-only MCP server for Claude Code
+
+Claude Code can search, inspect, and render your registry prompts directly —
+no copy-paste — through a local, stdio-only MCP server. It is an access layer
+only, **read-only by construction**:
+
+- the server accesses the registry exclusively through a composition-only
+  read facade (`ReadOnlyRegistry`), which has no mutation methods;
+- the SQLite connection is opened in `mode=ro`, so the database layer itself
+  rejects any write;
+- an executable test (`tests/test_mcp_readonly_invariant.py`) fails the build
+  if any mutation call or write SQL ever appears in the MCP package;
+- variables you pass to `render_prompt` and rendered bodies are returned to
+  the client only — never persisted, never logged.
+
+All writes (add, new-version, tag, cases, evals) stay in the CLI on purpose.
+
+### Install and run
+
+```bash
+pip install -e '.[mcp]'      # the base CLI works without this extra
+prompt-registry-mcp          # or: python -m prompt_registry.mcp
+```
+
+Register it for Claude Code with a `.mcp.json` in your project (or via
+`claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "prompt-registry": {
+      "command": "prompt-registry-mcp",
+      "args": ["--db", "/home/you/.prompt-registry/registry.db"]
+    }
+  }
+}
+```
+
+Choosing the database path: the server follows the same resolution as the
+CLI — `--db` flag, then `PROMPT_REGISTRY_DB`, then
+`~/.prompt-registry/registry.db`. Prefer an explicit `--db` in `.mcp.json` so
+the server and your CLI are guaranteed to look at the same file. Startup
+diagnostics go to stderr only and do not print the database path unless you
+pass `--debug`; stdout carries MCP protocol traffic exclusively.
+
+### Tools
+
+| Tool | What it does |
+| --- | --- |
+| `search_prompts(query, tag?, limit?)` | Substring search over id/name/description/latest body/tags; returns summaries with a short preview (limit capped at 50). |
+| `get_prompt(prompt, version?)` | Full prompt metadata plus the selected immutable version (default latest): variable schema, template body, content hash. Accepts id or exact name. |
+| `render_prompt(prompt, variables, version?)` | Strict render of a version with your values; missing/unknown variables return a structured error naming the variable, never a value. |
+| `list_prompt_versions(prompt)` | Version history: number, created_at, note, content hash. |
+
+Every tool returns `{"ok": true, "data": ...}` or
+`{"ok": false, "error": {"code", "message"}}` with codes `not_found`,
+`invalid_input`, `render_error`, `registry_unavailable`, `registry_invalid`,
+`internal_error`. Errors never include file paths, environment values, or
+stack traces.
+
+### Troubleshooting
+
+- **`pip install 'prompt-registry[mcp]'` message, exit code 3** — the MCP SDK
+  extra isn't installed in the Python environment the server was launched
+  from. Install the extra; the base CLI is unaffected either way.
+- **Tools return `registry_unavailable`** — the configured database file does
+  not exist yet. Run `prompt-registry init` (with the same `--db` /
+  `PROMPT_REGISTRY_DB` the server uses).
+- **Tools return `registry_invalid`** — the configured file exists but is not
+  a registry created by `prompt-registry init`; fix the path in `.mcp.json`.
+- **Empty search results** — the registry is initialized but has no prompts
+  yet, or your `--db` points at a different registry than your CLI.
+
 ## Where data lives
 
 Resolution order for the database path:
@@ -158,12 +231,14 @@ pytest -q
 Layout: `src/prompt_registry/` — `models.py` (frozen dataclasses),
 `store.py` (all SQLite persistence, no CLI coupling), `rendering.py`,
 `checks.py`, `diffing.py`, `evaluator.py`, `adapters.py` (the model-adapter
-seam: `ManualAdapter` and the stdlib-only `OllamaAdapter`), `cli.py`.
+seam: `ManualAdapter` and the stdlib-only `OllamaAdapter`), `readonly.py`
+(composition-only read facade), `mcp/` (read-only stdio server: SDK-free
+`tools.py`, thin `server.py`, `entry.py`), `cli.py`.
 Tests stub Ollama with a local `http.server`; no test needs Ollama installed.
+MCP stdio tests are skipped automatically if the `mcp` extra is absent.
 
 ## Deliberately not built yet
 
-An MCP read-only server for Claude Code, full-text search, import/export,
-judge-model evals, retries/concurrency for generation, output persistence,
-any UI. The storage layer is CLI-independent, so the MCP surface can be added
-without touching the core.
+MCP mutation/evaluation tools, automatic prompt selection, full-text search,
+import/export, judge-model evals, retries/concurrency for generation, output
+persistence, any UI. The CLI remains the only write path by design.

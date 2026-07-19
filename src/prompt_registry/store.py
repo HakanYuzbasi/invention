@@ -149,13 +149,15 @@ class RegistryStore:
         return cls(conn, path)
 
     @classmethod
-    def open(cls, path: str | Path) -> "RegistryStore":
+    def open(cls, path: str | Path, read_only: bool = False) -> "RegistryStore":
+        """Open an existing registry. With read_only=True the SQLite connection
+        is opened in mode=ro, so the database layer itself rejects any write."""
         path = Path(path).expanduser()
         if not path.exists():
             raise StorageError(
                 f"no registry found at {path}; run 'prompt-registry init' first"
             )
-        conn = cls._connect(path)
+        conn = cls._connect(path, read_only=read_only)
         try:
             row = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
@@ -173,15 +175,22 @@ class RegistryStore:
         return cls(conn, path)
 
     @staticmethod
-    def _connect(path: Path) -> sqlite3.Connection:
+    def _connect(path: Path, read_only: bool = False) -> sqlite3.Connection:
         try:
-            conn = sqlite3.connect(str(path))
+            if read_only:
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            else:
+                conn = sqlite3.connect(str(path))
         except sqlite3.Error as exc:
             raise StorageError(f"cannot open database at {path}: {exc}") from exc
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA journal_mode = WAL")
+            if not read_only:
+                conn.execute("PRAGMA journal_mode = WAL")
+            else:
+                # touching the schema forces immediate validation of the file
+                conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
         except sqlite3.Error as exc:
             conn.close()
             raise StorageError(f"{path} is not a prompt-registry database: {exc}") from exc
