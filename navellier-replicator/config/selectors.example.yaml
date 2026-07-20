@@ -3,35 +3,36 @@
 # Copy to config/selectors.yaml and tune against the live site.
 #
 # The collector tries each selector in a list in order and uses the first
-# match. Parsing is hybrid (structured + text fallback), so selector drift
-# degrades gracefully instead of hard-failing.
+# match. First match must resolve to a UNIQUE element (Playwright fill/click is
+# strict). InvestorPlace's /ipa-login/ renders TWO login forms (#pir_login_page
+# and #pir_login_modal), so unscoped name=username/password would match 2+
+# elements — selectors are scoped to the primary form #pir_login_page.
 
 login:
-  # Fields on the login form.
+  # Fields on the primary login form (#pir_login_page).
   username_candidates:
-    - "input[name='log']"
+    - "#TAuserId"
+    - "#pir_login_page input[name='username']"
     - "input[name='username']"
-    - "input[type='email']"
-    - "#user_login"
   password_candidates:
-    - "input[name='pwd']"
+    - "#TApassword"
+    - "#pir_login_page input[name='password']"
     - "input[name='password']"
-    - "input[type='password']"
-    - "#user_pass"
   submit_candidates:
-    - "button[type='submit']"
-    - "input[type='submit']"
-    - "#wp-submit"
+    - "#TAsubmitPage"
+    - "#pir_login_page input[type='submit']"
   # Presence of ANY of these AFTER submit => still logged out (fail closed).
+  # The primary-form password field is the most reliable logged-out signal.
   logged_out_markers:
-    - "input[name='pwd']"
-    - "text=Sign in"
-    - "text=Log in to your account"
-  # Presence of ANY of these => logged in.
+    - "#TApassword"
+    - "#pir_login_page"
+  # Presence of ANY of these => logged in. (Unverified against the real
+  # authenticated page; the min-content guard still backstops if wrong.)
   logged_in_markers:
     - "text=My Account"
     - "text=Sign Out"
     - "a[href*='logout']"
+    - "a[href*='ipa-logout']"
 
 portfolio:
   # Container(s) most likely to hold the holdings table.

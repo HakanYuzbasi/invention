@@ -12,6 +12,7 @@ can be imported and tested without the browser dependency installed.
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from pathlib import Path
 from types import TracebackType
@@ -81,7 +82,21 @@ class BrowserSession:
             ) from e
 
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=not self.headed)
+
+        # In an egress-gated environment (e.g. a sandbox) Chromium must route
+        # through the configured proxy or direct connections are reset. Honor
+        # HTTPS_PROXY when present; on a normal machine (no proxy env) launch is
+        # unchanged and TLS validation below stays strict.
+        proxy_server = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        launch_kwargs: dict[str, object] = {"headless": not self.headed}
+        if proxy_server:
+            launch_kwargs["proxy"] = {"server": proxy_server}
+            log.info("Routing browser through proxy: %s", proxy_server)
+        self._browser = self._pw.chromium.launch(**launch_kwargs)
+
+        # TLS verification is always left strict; a trusted CA (e.g. a corporate
+        # or sandbox proxy CA) belongs in the browser's trust store, not disabled
+        # here.
         self._context = self._browser.new_context(
             viewport={"width": 1440, "height": 2200},
             user_agent=(
