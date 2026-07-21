@@ -224,4 +224,241 @@ CREDENTIALS: low risk both (no committed secrets; check_secrets.py guard).
 
 ---
 
-*Part 3 (Phases 6–10: Decision, Scorecard, Counter-argument, Migration, Final Recommendation) to follow.*
+# PART 3 — Synthesis & Final Recommendation (Phases 6–10)
+
+## Executive Summary
+
+**UNIFY** — merge Apex **into** Eureka, with Eureka as the base, single source of
+truth, and go-forward runtime; retire Apex to a read-only research archive; and
+re-home only Apex's genuinely-unique, safety-neutral assets (the IBKR connector,
+TWAP/options execution, specific risk/signal research) by passing each through
+the `gauntlet` gate before it can touch capital.
+
+The decision is forced by the mission's own priority order (correctness >
+trading safety > fail-closed > auditability > single source of truth). On every
+one of those top-five axes the Eureka implementation wins on cited evidence, and
+the two systems are not complementary — Eureka is already a from-scratch,
+safety-hardened re-implementation of Apex's core (9 subsystems name-mirrored
+across both trees) plus one further extraction (`gauntlet`) that Apex never
+adopted. "Keep separate" is the status quo that the CRITICAL duplication
+severity condemns; "merge into Apex" inherits a 16,735-LOC god-module
+[core/system_fortress.py], a fail-open config imported by 151 files
+[config.py:57-62], and a live/market-order pathway
+[execution/smart_order_router.py:37,53,100,143]; "new repo" throws away Eureka's
+19k tested LOC to rebuild what Eureka already is.
+
+## Repository Inventory
+
+| Repo | Purpose | Size | State | Role going forward |
+|---|---|---|---|---|
+| Apex | Multi-tenant, live-capable trading SaaS [core/orchestrator.py:35-39] | 930 `.py`, ~243,493 LOC; 259 test files | Runtime retired per `STRATEGY.md`; lost real money | Read-only research archive; donor of unique modules |
+| Eureka (`fable5`) | Single-user, paper-only, auditable Alpaca system [README.md:1-6] | 122 `.py`, ~19,146 LOC; 47 test files | Actively developed; 330–377 tests green | Base / SSOT / go-forward runtime |
+| `gauntlet` | Extracted honesty machinery [gauntlet/README.md] | stdlib-only, Apache-2.0 | Consumed by Eureka, pinned [pyproject.toml] | Shared library for both |
+
+## Architecture Maps
+
+- **Apex** — per-tenant async `ApexTradingSystem` via 4-mixin multiple inheritance
+  [core/execution_loop.py:5-17], dominated by the 16,735-LOC `SystemFortressMixin`
+  owning `run()` [core/system_fortress.py:15023]; orchestrator spawns/kills/restarts
+  tenant loops [core/orchestrator.py:82-194]; dual broker
+  [core/system_fortress.py:385-451]; three layered risk managers
+  [core/system_fortress.py:486,774,786-794]; SaaS deps incl. Postgres/Redis/Stripe/torch
+  [requirements.txt]; class-config with parameter-store metaclass and env-gated live
+  [config.py:50-60,97-103].
+- **Eureka** — flat `fable5/` wired by one composition root
+  [fable5/main.py:23-95]; cycle `engine → signal → strategy → execution`
+  [fable5/scheduler.py:4,254]; single limit-only broker [fable5/alpaca_client.py:5-6,51];
+  single risk manager [fable5/risk_manager.py]; minimal CPU-only deps + pinned
+  `gauntlet` [pyproject.toml]; paper-only enforced at load [fable5/config.py:3-5,55-66].
+
+## Duplicate Systems
+
+Fourteen subsystems overlap; 9 share identical module names across both trees
+(`live_gate`, `liveness_monitor`, `execution_quality`, `execution_engine`,
+`universe_manager`, `parameter_store`, `data_validator`, `signal_aggregator`,
+`cost_model`). Full matrix in Part 2 above. Decisive case: honesty machinery is a
+single pinned SSOT in Eureka via `gauntlet` re-exports
+[fable5/preregistration.py:14-27, fable5/trials_ledger.py:14, fable5/metrics.py:33]
+but triplicated in Apex across `fable8/`, `quant_system/research/`, `backtesting/`.
+Only non-duplicated Apex runtime asset: the IBKR connector
+[execution/ibkr_connector.py]. Overall duplication severity: **CRITICAL**.
+
+## Safety Review
+
+Apex safety is policy-based/defeatable; Eureka's is structural/fail-closed.
+Criticals: accidental live two env vars away, no structural block
+[config.py:3101-3104] vs attestation-only live "no override, no env backdoor"
+[fable5/main.py:410-433]; router escalates to MARKET
+[execution/smart_order_router.py:37,53,100,143] vs structurally limit-only
+[fable5/alpaca_client.py:5-6]. Highs: fail-open config [config.py:57-62]; 77
+silent `except…pass/continue` in the god-file vs 0 in all of `fable5/`; 3 shared
+global singletons across tenant loops [core/orchestrator.py:208,
+core/parameter_store.py:113, services/broker/service.py:1080]; idempotency
+defeatable at `TTL=0` [execution/order_idempotency.py:1-40]. Credential leakage
+low for both (`scripts/check_secrets.py`).
+
+## Dead Code
+
+Structural, not annotated: `scripts/` (120 files/29,808 LOC incl.
+`alpha_lab.py`+`alpha_lab_v2.py`); `scratch/` throwaways (some destructive);
+root round-artifacts (`r16_best_config.json`, `r17_artifacts/`, `r18_artifacts/`,
+`r17_train.py`, `r18_train.py`); honesty triplication; intra-Apex duplicate
+reconciler and logger; legacy modes [core/orchestrator.py:173, config.py:1922-2597].
+Delete `scratch/`; Archive artifacts; Merge `scripts/` to one entrypoint;
+Delete/Merge honesty forks → `gauntlet`.
+
+## Dependency Review
+
+Two god-nodes: `config.py` (151 importers; real `config ↔ core.parameter_store`
+cycle [config.py:57; core/parameter_store.py:31]) and `system_fortress.py`
+(16,735 LOC, 103 imports). Eureka flat (config imported by 4 files; largest file
+603 LOC [fable5/main.py]) with one explicit pinned shared abstraction. Untangle
+Apex-as-base = XL; re-home Apex's unique pieces onto Eureka = M–L.
+
+## Evidence Gaps
+
+1. Apex `monitoring/` (22,314 LOC) reporting flow not traced end-to-end.
+2. Neither system executed; test-pass claims from counts/`STRATEGY.md`, not a run.
+3. No runtime benchmarking — winner/severity/cost calls are architectural.
+4. Shallow clones (depth 1) — no blame/churn; "legacy" inferred from structure.
+5. `services/broker/service.py` internals and much of `risk/` sampled, not fully read.
+6. Business value of Apex's SaaS/multi-tenant/IBKR/options stack is out of scope.
+
+## Strongest Case Against My Recommendation
+
+*The opposite: keep Apex as base (or keep both), because Eureka is too small.*
+
+Strongest evidence for it: Apex has ~243k LOC and 259 test files of capabilities
+Eureka lacks — IBKR [execution/ibkr_connector.py], options/TWAP
+[execution/options_trader.py, execution/adaptive_twap.py], multi-tenant
+orchestration [core/orchestrator.py:82-194], a SaaS spine (auth, Stripe, Postgres,
+Redis, FastAPI) [requirements.txt], and ML/RL research. Eureka is paper-only,
+single-broker, single-user, no live path. If the goal is a commercial live
+platform, "merge into Eureka" looks like discarding the only assets that could
+become a product and mistaking Eureka's safety (partly from doing less) for
+superiority.
+
+Why it loses: (1) mission priorities rank correctness/safety/fail-closed/audit
+above velocity/scalability — and Apex fails exactly those on cited evidence
+[config.py:57-62; execution/smart_order_router.py:37,53; config.py:3101-3104];
+an option can't win on the lowest-weighted criteria. (2) Apex's capabilities are
+largely unproven/unsafe — `STRATEGY.md` records it traded real money and lost with
+zero validated edge; the SaaS scaffolding served a product with no product-market
+fit, so it is sunk cost, not banked value. (3) UNIFY does not discard those assets
+— it cherry-picks IBKR/TWAP/options/risk research through the gauntlet gate and
+keeps Apex as a readable archive, so the objection's valid content is satisfied by
+the recommendation. (4) "New repo" is dominated because Eureka *is* the clean
+rewrite a greenfield would produce. The counter-case wins only if the objective
+were "maximize feature surface regardless of safety," which inverts the priorities.
+
+## Final Recommendation
+
+**UNIFY — merge Apex into Eureka (Eureka as base/SSOT); archive Apex; port unique
+modules through the gate.**
+
+### Decision scorecard (Phase 9)
+Weights derive from the mission priority order. Weighted total = Σ(weight × score);
+normalized = total ÷ 60.
+
+| Criterion (weight) | Keep Separate | Apex→Eureka | Eureka→Apex | New repo |
+|---|---|---|---|---|
+| Correctness (10) | 6 | 9 | 3 | 7 |
+| Trading safety (9) | 5 | 9 | 3 | 8 |
+| Fail-closed (8) | 5 | 9 | 3 | 8 |
+| Auditability (7) | 5 | 9 | 4 | 8 |
+| Single source of truth (6) | 3 | 9 | 3 | 8 |
+| Maintainability (5) | 3 | 8 | 2 | 7 |
+| Research velocity (4) | 5 | 7 | 6 | 4 |
+| Operational simplicity (3) | 5 | 8 | 2 | 7 |
+| Developer productivity (3) | 4 | 7 | 3 | 4 |
+| Testing (5) | 5 | 7 | 5 | 5 |
+| **Weighted total** | 285 | **508** | 201 | 419 |
+| **Normalized (/10)** | 4.75 | **8.47** | 3.35 | 6.98 |
+
+Ranking: **Apex→Eureka (8.47)** > New repo (6.98) > Keep Separate (4.75) >
+Eureka→Apex (3.35).
+
+### Migration plan (Phase 8) — no code
+- **Principles:** Eureka is base and SSOT; `gauntlet` is the sole honesty library;
+  nothing from Apex enters runtime until it passes the gauntlet gate and conforms
+  to Eureka's structural safety (limit-only, paper-default, attestation-gated
+  live); one capability at a time; Apex stays an untouched read-only archive so
+  rollback is always "use Eureka as-is."
+- **Order:** (1) Freeze Apex runtime → archive. (2) Ratify `gauntlet` as the only
+  honesty SSOT. (3) Port unique, safety-neutral modules behind Eureka interfaces:
+  IBKR connector *as a second adapter conforming to the limit-only contract* →
+  TWAP/options opt-in → Apex risk/signal ideas as candidate strategies that must
+  clear pre-registration + walk-forward + DSR. (4) Carry only still-relevant
+  parameters via Eureka's audited `ParameterStore`.
+- **Safety checkpoints:** each port preserves paper-only default, introduces no
+  market-order path unless explicitly gated, keeps the Eureka suite green, and
+  clears the live-gate/attestation before any capital.
+- **Rollback checkpoints:** every capability on a branch behind a flag; failed
+  validation → revert the module; base stays green because Apex is never mutated.
+- **Testing milestones:** (i) Eureka suite green post-ratification; (ii) IBKR
+  adapter conformance (limit-only + reconciliation) green in paper; (iii) each
+  ported idea passes walk-forward + DSR in the trials ledger; (iv) end-to-end
+  paper run reconciles cleanly.
+- **Repository retirement:** tag a final Apex commit, mark README "retired —
+  research archive; runtime superseded by Eureka," keep read-only, never delete.
+  Eureka becomes the single maintained runtime; `gauntlet` stays its own library.
+
+### Required attributes
+- **Confidence:** 85%. Architectural evidence is strong and consistent; the 15%
+  reflects un-executed/un-benchmarked gaps and the out-of-scope business question.
+- **Major risks:** (a) porting IBKR/options re-introduces a market-order or live
+  path if the limit-only/attestation contracts are not enforced on the adapter;
+  (b) scope creep recreating the monolith inside Eureka; (c) losing knowledge
+  buried in Apex `risk/`/`scripts/` if archived carelessly.
+- **Major benefits:** collapses CRITICAL duplication to one SSOT; inherits
+  fail-closed safety by construction; ~19k maintainable LOC replaces ~243k for a
+  solo dev; one audit trail + attestation-gated live; `gauntlet` already shared.
+- **Non-negotiable requirements:** paper-only default preserved; no market-order
+  path except behind an explicit pre-registered gate; `gauntlet` is the only
+  honesty machinery (delete Apex forks from the go-forward path); every ported
+  capability clears pre-registration + walk-forward + DSR before capital; Apex
+  archived read-only, not deleted.
+- **Expected engineering effort:** Medium. Most of Apex is archived, not migrated;
+  the expensive clean-rewrite already exists as Eureka. Effort is selective,
+  on-demand porting (IBKR M–L; TWAP/options M; risk/signal research L, mostly
+  validation). Rises to High only if the full multi-tenant/SaaS surface is ported
+  — not recommended.
+- **Biggest unknowns:** (1) whether Apex's IBKR/options/multi-tenant surface has
+  real business value (business call); (2) whether any Apex `risk/` module encodes
+  a validated edge that survives the gauntlet gate (`STRATEGY.md`: none found so
+  far); (3) Apex `monitoring/` internals never traced.
+
+---
+
+## Executive summary (Part 3)
+
+```text
+APEX ↔ EUREKA ARCHITECTURE REVIEW — PART 3 (Phases 6–10) — SUMMARY
+
+DECISION: UNIFY — merge Apex INTO Eureka (Eureka = base/SSOT); archive Apex
+read-only; port only unique pieces (IBKR, TWAP/options, risk research) through the
+gauntlet gate.
+
+SCORECARD (weighted /10): Apex→Eureka 8.47 > New repo 6.98 > Keep Separate 4.75 >
+Eureka→Apex 3.35. Weights from mission priorities.
+
+WHY: on the top-5 priorities (correctness, safety, fail-closed, audit, SSOT)
+Eureka wins on cited evidence; Apex = fail-open config [config.py:57-62],
+market-order escalation [smart_order_router.py:37,53], live-behind-a-flag
+[config.py:3101-3104], 16,735-LOC god-module, 151-importer config + circular dep.
+Eureka is already the clean rewrite a greenfield would produce.
+
+COUNTER-CASE (argued + defeated): Apex has IBKR/options/multi-tenant/SaaS Eureka
+lacks — but unproven/unsafe sunk cost, ranked below safety; UNIFY preserves them
+via cherry-pick + archive.
+
+CONFIDENCE 85%. EFFORT Medium (most of Apex archived, not migrated; Eureka exists).
+NON-NEGOTIABLES: paper-only default; no market path except behind a pre-registered
+gate; gauntlet as sole honesty SSOT; every port clears prereg+walk-forward+DSR;
+Apex archived not deleted.
+
+EVIDENCE GAPS: monitoring/ not traced; nothing executed/benchmarked; depth-1
+clones (no churn history).
+```
+
+*End of review.*
